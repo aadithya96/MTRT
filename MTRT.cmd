@@ -104,16 +104,23 @@ IF EXIST "%WINDIR%\SysWOW64" (set "SETACL=%DATA%\SetACL_x64.exe") else (set "SET
 :: Get User SID
 FOR /F "DELIMS= " %%A IN ('"WMIC PATH WIN32_UserAccount WHERE Name='%UserName%' GET SID"') DO (
    IF /I NOT "%%A"=="SID" (          
-      SET SID=%%A
+      SET CUR_SID=%%A
       GOTO :END_SID_LOOP
    ))
 :END_SID_LOOP
 
+:: Generate SID list
+FOR /F "Tokens=2* Delims=\" %%a IN ('REG QUERY HKU ^|FINDSTR /R "DEFAULT S-1-5-[0-9]*-[0-9-]*$"') DO SET "SID=!SID! %%a"
 
 :START
 CD /D "%DATA%"
 CALL :LOGTXT "  Start MTRT - MS Telemetry Removal %SCRIPT_VERSION%"
 CALL :LOGTXT "   Logging to: %MTRT_LOGPATH%\%MTRT_LOGFILE%"
+
+CALL :LOGTXT "   Creating System Restore point
+CALL :MAKESRP
+CD /D "%TEMP%"
+CALL :LOGCMD CSCRIPT //NOLOGO MTRT_SRP.vbs
 
 CALL :LOGTXT "   Killing Gwx / OneDrive / Windows Update Service"
 CALL :LOGCMD TASKKILL /F /IM "Gwx.exe" /T
@@ -121,6 +128,7 @@ CALL :LOGCMD TASKKILL /F /IM "OneDrive.exe" /T
 CALL :LOGCMD NET STOP wuauserv
 
 CALL :LOGTXT "   Setting registry permissions"
+CD /D "%DATA%"
 :: Take ownership of registry folders as defined in reg.ini file
 FOR /F "eol=# tokens=%TOKENS% delims=	|" %%A IN (Reg.ini) DO (
 	IF /I "%%A"=="Y" (
@@ -148,6 +156,7 @@ CALL :LOGCMD NET STOP DiagTrack
 CALL :LOGCMD SC CONFIG DiagTrack START= disabled
 CALL :LOGCMD NET STOP diagnosticshub.standardcollector.service
 CALL :LOGCMD SC CONFIG diagnosticshub.standardcollector.service START= disabled
+:: NOTE I SHOULD QUERY IF DIAGTRACK EXISTS AND IS DISABLED, PERFORM NEXT STEP ONLY IF SO
 :: Clear or create log file, then lock it down
 IF NOT EXIST "%SYSTEMDRIVE%\ProgramData\Microsoft\Diagnosis\ETLLogs\AutoLogger\AutoLogger-Diagtrack-Listener.etl" (
 	CALL :LOGCMD MKDIR "%SYSTEMDRIVE%\ProgramData\Microsoft\Diagnosis\ETLLogs\AutoLogger"
@@ -214,10 +223,10 @@ CALL :LOGCMD SC CONFIG XboxNetApiSvc START= disabled
 
 :: Overly redundant keys, as we disable Wifi Sense is the main tweaks, this is just another layer
 :: 893- All enabled		828- All disabled
-CALL :LOGCMD REG ADD "HKLM\SOFTWARE\Microsoft\WcmSvc\wifinetworkmanager\features\%SID%" /T REG_DWORD /V FeatureStates /D 828 /F
-CALL :LOGCMD REG ADD "HKLM\SOFTWARE\Microsoft\WcmSvc\wifinetworkmanager\features\%SID%\SocialNetworks\ABCH" /T REG_DWORD /V OptInStatus /D 0 /F
-CALL :LOGCMD REG ADD "HKLM\SOFTWARE\Microsoft\WcmSvc\wifinetworkmanager\features\%SID%\SocialNetworks\ABCH-SKYPE" /T REG_DWORD /V OptInStatus /D 0 /F
-CALL :LOGCMD REG ADD "HKLM\SOFTWARE\Microsoft\WcmSvc\wifinetworkmanager\features\%SID%\SocialNetworks\FACEBOOK" /T REG_DWORD /V OptInStatus /D 0 /F
+CALL :LOGCMD REG ADD "HKLM\SOFTWARE\Microsoft\WcmSvc\wifinetworkmanager\features\%CUR_SID%" /T REG_DWORD /V FeatureStates /D 828 /F
+CALL :LOGCMD REG ADD "HKLM\SOFTWARE\Microsoft\WcmSvc\wifinetworkmanager\features\%CUR_SID%\SocialNetworks\ABCH" /T REG_DWORD /V OptInStatus /D 0 /F
+CALL :LOGCMD REG ADD "HKLM\SOFTWARE\Microsoft\WcmSvc\wifinetworkmanager\features\%CUR_SID%\SocialNetworks\ABCH-SKYPE" /T REG_DWORD /V OptInStatus /D 0 /F
+CALL :LOGCMD REG ADD "HKLM\SOFTWARE\Microsoft\WcmSvc\wifinetworkmanager\features\%CUR_SID%\SocialNetworks\FACEBOOK" /T REG_DWORD /V OptInStatus /D 0 /F
 :SKIP_10_TWEAKS
 
 
@@ -239,12 +248,12 @@ NETSH AdvFirewall Firewall Show Rule %%A >NUL && (
 	))
 
 
-IF /I "%WIN_VER:~0,9%"=="Windows 1" (GOTO :SKIPHOSTS)
 CALL :LOGTXT "   Blocking PersistentRoutes"
 :: Parse PersistentRoutes.ini, skip any line starting with ; and route to 0.0.0.0
 FOR /F "eol=# tokens=1*" %%E in (PersistentRoutes.ini) DO (CALL :LOGCMD ROUTE -P ADD %%E 0.0.0.0)
 
 
+IF /I "%WIN_VER:~0,9%"=="Windows 1" (GOTO :SKIPHOSTS)
 :: Configure HOSTS permissions and make backup
 CALL :LOGTXT "   Backing up HOSTS file and applying tweaks"
 CD /D "%WINDIR%\System32\drivers\etc"
@@ -261,7 +270,7 @@ FOR /F "eol=# tokens=1 delims=	 " %%F IN (hosts.ini) DO (
 		ECHO 0.0.0.0 %%F #>>"%WINDIR%\System32\Drivers\etc\hosts"
 ))
 CALL :LOGCMD IPCONFIG /FlushDNS
-
+:SKIPHOSTS
 
 
 :: Uninstall KB Updates
@@ -321,10 +330,10 @@ TIMEOUT 6
 GOTO :EOF
 :WRITE_VBS_FILE
 BREAK>"%TEMP%\ElevateMTRT.vbs"
-ECHO:Set objShell = CreateObject("Shell.Application")>"ElevateMTRT.vbs"
-ECHO:Set objWshShell = WScript.CreateObject("WScript.Shell")>>"ElevateMTRT.vbs"
-ECHO:Set objWshProcessEnv = objWshShell.Environment("PROCESS")>>"ElevateMTRT.vbs"
-ECHO:objShell.ShellExecute "%~DPF0", "%~1", "", "runas", 1 >>"ElevateMTRT.vbs"
+	ECHO:Set objShell = CreateObject("Shell.Application")>"ElevateMTRT.vbs"
+	ECHO:Set objWshShell = WScript.CreateObject("WScript.Shell")>>"ElevateMTRT.vbs"
+	ECHO:Set objWshProcessEnv = objWshShell.Environment("PROCESS")>>"ElevateMTRT.vbs"
+	ECHO:objShell.ShellExecute "%~DPF0", "%~1", "", "runas", 1 >>"ElevateMTRT.vbs"
 EXIT /B
 :LOGCMD
 IF /I "%COMMAND_LOGGING%"=="YES" (
@@ -337,8 +346,13 @@ IF /I "%COMMAND_LOGGING%"=="YES" (
 )
 EXIT /B
 :LOGTXT
-ECHO:%CUR_DATE% %TIME%  %~1 >>"%MTRT_LOGPATH%\%MTRT_LOGFILE%"
-ECHO:%CUR_DATE% %TIME%  %~1
+	ECHO:%CUR_DATE% %TIME%  %~1 >>"%MTRT_LOGPATH%\%MTRT_LOGFILE%"
+	ECHO:%CUR_DATE% %TIME%  %~1
+EXIT /B
+:MAKESRP
+BREAK>"%TEMP%\MTRT_SRP.vbs"
+ECHO:Set IRP = getobject("winmgmts:\\.\root\default:Systemrestore")>"%TEMP%\MTRT_SRP.vbs"
+ECHO:MYRP = IRP.createrestorepoint ("Run MTRT", 0, 100)>>"%TEMP%\MTRT_SRP.vbs"
 EXIT /B
 :EOF
 ENDLOCAL
