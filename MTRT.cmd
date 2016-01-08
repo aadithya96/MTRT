@@ -54,10 +54,10 @@ SETLOCAL EnableDelayedExpansion
 pushd "%~dp0" & cd /d "%~dp0"
 
 :: MTRT Version number
-SET "SCRIPT_VERSION=2.5"
+SET "SCRIPT_VERSION=3.0 Pre_Alpha"
 
 :: Set build date
-SET BUILDDATE=2015-12-12
+SET BUILDDATE=2016-01-07
 
 :: Set title
 TITLE MTRT v%SCRIPT_VERSION% (%BUILDDATE%)
@@ -278,6 +278,7 @@ FOR /F "eol=# tokens=1 delims=	 " %%F IN (hosts.ini) DO (
 	FIND /I "0.0.0.0 %%F #" "%WINDIR%\System32\Drivers\etc\hosts" >NUL || (
 		ECHO 0.0.0.0 %%F #>>"%WINDIR%\System32\Drivers\etc\hosts"
 ))
+:SKIPHOSTS
 CALL :LOGCMD IPCONFIG /FlushDNS
 :SKIPHOSTS
 

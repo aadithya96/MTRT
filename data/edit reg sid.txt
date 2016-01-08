@@ -1,0 +1,23 @@
+REM Modify a registry key in for all logged in users
+REM Also modify it in the .DEFAULT hive so future users get it.
+REM
+REM Copyright Jared Barneck
+REM
+
+GOTO main
+
+:modkey
+  REM %1 is the value of %a that is passed.
+  REG Add HKU\%1\SomeRegKey
+  REG ADD HKU\%1\SomeRegKey /v SomeDWORD /t REG_DWORD /d 1
+  REG ADD HKU\%1\SomeRegKey /v SomeString /t REG_SZ /d "Hello, World"
+  REM Going to :end here only ends this instance of the call to the 
+  REM :modkey label. It does not end the whole batch file.
+GOTO end
+
+:main
+  FOR /F "tokens=2* delims=\" %%a IN ('REG QUERY HKU ^|Findstr /R "DEFAULT S-1-5-[0-9]*-[0-9-]*$"') DO CALL :modkey %%a
+  REM Going to :end here ends the whole batch file.
+GOTO end
+
+:end
