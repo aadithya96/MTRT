@@ -116,7 +116,7 @@ FOR /F "Tokens=2* Delims=\" %%a IN ('REG QUERY HKU ^|FINDSTR /R "DEFAULT S-1-5-[
 CD /D "%DATA%"
 CALL :LOGTXT "  Start MTRT - MS Telemetry Removal %SCRIPT_VERSION%"
 CALL :LOGTXT "   Logging to: %MTRT_LOGPATH%\%MTRT_LOGFILE%"
-
+goto:TEST
 CALL :LOGTXT "   Creating System Restore point
 CALL :MAKESRP
 CD /D "%TEMP%"
@@ -247,10 +247,19 @@ NETSH AdvFirewall Firewall Show Rule %%A >NUL && (
 		CALL :LOGCMD NETSH AdvFirewall Firewall Add Rule %%A %%B Dir=Out Action=Block Enable=Yes
 	))
 
+:TEST
+:: Read from Hosts_Database.ini
+REM netsh advfirewall firewall add rule name="%HOST%_Block" dir=out interface=any action=block remoteip=%IP%
+FOR /F "eol=# tokens=1,2 delims=	/" %%A IN (host_database.ini) DO (
+	set bee=%%a
+	echo !bee!	
+	)
+)
+pause
 
 CALL :LOGTXT "   Blocking PersistentRoutes"
 :: Parse PersistentRoutes.ini, skip any line starting with ; and route to 0.0.0.0
-FOR /F "eol=# tokens=1*" %%E in (PersistentRoutes.ini) DO (CALL :LOGCMD ROUTE -P ADD %%E 0.0.0.0)
+FOR /F "eol=# tokens=1*" %%E in (PersistentRoutes.ini) DO (CALL :LOGCMD ROUTE -P ADD %%E MASK 255.255.255.255 0.0.0.0)
 
 
 IF /I "%WIN_VER:~0,9%"=="Windows 1" (GOTO :SKIPHOSTS)
