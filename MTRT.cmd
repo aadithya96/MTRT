@@ -1,9 +1,9 @@
 @ECHO OFF
 :::::::::::::::::::::::::::::::::::::::::::::
 :: MTRT - Microsoft Telemetry Removal Tool ::
-::         made by u/spexdi                ::
+::             made by spexdi              ::
 :::::::::::::::::::::::::::::::::::::::::::::
-::
+
 :::::::::::::::
 :: VARIABLES :: -------------- You are welcome to edit these settings. --------- ::
 :::::::::::::::
@@ -19,12 +19,13 @@
 
 :: Dry Run - Run through script, but don't execute any jobs
 :: ** Can be paired with Command Logging to generate a log of what commands will run on your system.
-	SET "DRY_RUN=NO"
+:: SETTINGS: YES or NO
+	SET "DRY_RUN=yes"
 
 :: Command Logging: Logs command and it's output to log file *WARNING* May generate large log file!
 :: ** Can be paired with Dry Run to skip command execution
 :: SETTINGS: YES or NO
-	SET "COMMAND_LOGGING=NO"
+	SET "COMMAND_LOGGING=yes"
 
 :: Folders to be cleaned and locked down
 :: NOTE: A ^ is required at the end of each line except the last
@@ -91,21 +92,32 @@ IF NOT EXIST "%MTRT_LOGPATH%" MKDIR "%MTRT_LOGPATH%"
 FOR /F "tokens=3*" %%I IN ('REG QUERY "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion" /V ProductName ^| Find "ProductName"') DO (SET WIN_VER=%%I %%J)
 
 :: OS check & set tokens for Reg.ini and KB.ini file
-IF /I "%WIN_VER:~0,9%"=="Windows 7"				(set "TOKENS=1,4,5,6,7" & GOTO END_VER_CHECK)
-IF /I "%WIN_VER:~0,9%"=="Windows 8"				(set "TOKENS=2,4,5,6,7" & GOTO END_VER_CHECK)
-IF /I "%WIN_VER:~0,19%"=="Windows Server 2012"	(set "TOKENS=2,4,5,6,7" & GOTO END_VER_CHECK)
-IF /I "%WIN_VER:~0,9%"=="Windows 1"				(set "TOKENS=3,4,5,6,7" & GOTO END_VER_CHECK)
-GOTO FAIL
+IF /I "%WIN_VER:~0,9%"=="Windows 7"				(set "TOKENS=1,4,5,6,7" & GOTO:END_VER_CHECK)
+IF /I "%WIN_VER:~0,9%"=="Windows 8"				(set "TOKENS=2,4,5,6,7" & GOTO:END_VER_CHECK)
+IF /I "%WIN_VER:~0,19%"=="Windows Server 2012"	(set "TOKENS=2,4,5,6,7" & GOTO:END_VER_CHECK)
+IF /I "%WIN_VER:~0,9%"=="Windows 1"				(set "TOKENS=3,4,5,6,7" & GOTO:END_VER_CHECK)
+GOTO:FAIL
 :END_VER_CHECK
 
-:: Determine and set which SetACL to use
-IF EXIST "%WINDIR%\SysWOW64" (set "SETACL=%DATA%\SetACL_x64.exe") else (set "SETACL=%data%\SetACL_x32.exe")
+:: Determine if 32 or 64-bit OS and set some settings
+IF EXIST "%WINDIR%\SysWOW64" (
+		set "SETACL=%DATA%\SetACL_x64.exe"
+		SET Wow6432Node=\Wow6432Node
+		SET BIT=x64
+	) else (
+		set "SETACL=%data%\SetACL_x32.exe"
+		SET Wow6432Node=
+		SET BIT=x32
+	)
+
+	
+for /f "tokens=2 delims==" %%A in ('wmic path win32_OperatingSystem get OSLanguage /Value') do set Language=%%A
 
 :: Get User SID
 FOR /F "DELIMS= " %%A IN ('"WMIC PATH WIN32_UserAccount WHERE Name='%UserName%' GET SID"') DO (
    IF /I NOT "%%A"=="SID" (          
       SET CUR_SID=%%A
-      GOTO :END_SID_LOOP
+      GOTO:END_SID_LOOP
    ))
 :END_SID_LOOP
 
@@ -116,9 +128,15 @@ FOR /F "Tokens=2* Delims=\" %%a IN ('REG QUERY HKU ^|FINDSTR /R "DEFAULT S-1-5-[
 CD /D "%DATA%"
 CALL :LOGTXT "  Start MTRT - MS Telemetry Removal %SCRIPT_VERSION%"
 CALL :LOGTXT "   Logging to: %MTRT_LOGPATH%\%MTRT_LOGFILE%"
+CALL :LOGTXT "   Logging OS Version: %WIN_VER% %BIT%
+CALL :LOGTXT "   Logging OS Language Code: %Language%
+
+
 goto:TEST
+
+
 CALL :LOGTXT "   Creating System Restore point
-CALL :MAKESRP
+CALL :MAKESRPVBS
 CD /D "%TEMP%"
 CALL :LOGCMD CSCRIPT //NOLOGO MTRT_SRP.vbs
 
@@ -173,7 +191,7 @@ CD /D "%DATA%"
 
 
 :: Start Window 10 Only
-IF /I NOT "%WIN_VER:~0,9%"=="Windows 1" (GOTO :SKIP_10_TWEAKS)
+IF /I NOT "%WIN_VER:~0,9%"=="Windows 1" (GOTO:SKIP_10_TWEAKS)
 CALL :LOGTXT "   Kill OneDrive integration"
 CALL :LOGCMD TASKKILL /F /IM  Explorer.exe
 CALL :LOGCMD TIMEOUT 5
@@ -238,31 +256,28 @@ FOR /F "eol=# tokens=%TOKENS% delims=	|" %%A IN (Reg.ini) DO (
 		CALL :LOGCMD REG ADD "%%B" /T %%E /V %%C /D %%D /F
 	))
 
-CALL :LOGTXT "   Blocking via Windows Firewall"
-:: Read from WindowsFirewall.ini
-FOR /F "eol=# tokens=1* delims=	 " %%A IN (WindowsFirewall.ini) DO (
-NETSH AdvFirewall Firewall Show Rule %%A >NUL && (
-		CALL :LOGCMD NETSH AdvFirewall Firewall Set Rule %%A New %%B Dir=Out Action=Block Enable=Yes
-	)||(
-		CALL :LOGCMD NETSH AdvFirewall Firewall Add Rule %%A %%B Dir=Out Action=Block Enable=Yes
-	))
+
+
 
 :TEST
+CALL :LOGTXT "   Blocking via Windows Firewall"
 :: Read from Hosts_Database.ini
-REM netsh advfirewall firewall add rule name="%HOST%_Block" dir=out interface=any action=block remoteip=%IP%
 FOR /F "eol=# tokens=1,2 delims=	/" %%A IN (host_database.ini) DO (
-	set bee=%%a
-	echo !bee!	
-	)
-)
-pause
+NETSH AdvFirewall Firewall Show Rule %%A_Block >NUL && (
+		CALL :LOGCMD NETSH AdvFirewall Firewall Set Rule Name=%%A_Block New RemoteIP=%%B Dir=Out Action=Block Enable=Yes
+	)||(
+		CALL :LOGCMD NETSH AdvFirewall Firewall Add Rule Name=%%A_Block RemoteIP=%%B Dir=Out Action=Block Enable=Yes
+	))
 
+pause
+pause
+exit
 CALL :LOGTXT "   Blocking PersistentRoutes"
 :: Parse PersistentRoutes.ini, skip any line starting with ; and route to 0.0.0.0
 FOR /F "eol=# tokens=1*" %%E in (PersistentRoutes.ini) DO (CALL :LOGCMD ROUTE -P ADD %%E MASK 255.255.255.255 0.0.0.0)
 
 
-IF /I "%WIN_VER:~0,9%"=="Windows 1" (GOTO :SKIPHOSTS)
+IF /I "%WIN_VER:~0,9%"=="Windows 1" (GOTO:SKIPHOSTS)
 :: Configure HOSTS permissions and make backup
 CALL :LOGTXT "   Backing up HOSTS file and applying tweaks"
 CD /D "%WINDIR%\System32\drivers\etc"
@@ -280,7 +295,6 @@ FOR /F "eol=# tokens=1 delims=	 " %%F IN (hosts.ini) DO (
 ))
 :SKIPHOSTS
 CALL :LOGCMD IPCONFIG /FlushDNS
-:SKIPHOSTS
 
 
 :: Uninstall KB Updates
@@ -311,7 +325,7 @@ FOR %%G IN (%WINTEMP:	= %) DO (
 
 :: Attempt to hide bad KB's from Windows Update
 CALL :LOGCMD NET START wuauserv
-IF /I "%WIN_VER:~0,9%"=="Windows 1" (GOTO :SKIPHIDEUPDATES)
+IF /I "%WIN_VER:~0,9%"=="Windows 1" (GOTO:SKIPHIDEUPDATES)
 CALL :LOGTXT "   Hiding Updates (VERY SLOW, last step though)"
 CD /D "%DATA%"
 FOR /F "eol=# tokens=%TOKENS% delims=	|" %%A IN (KB.ini) DO (
@@ -325,19 +339,25 @@ CALL :LOGCMD CSCRIPT //NOLOGO HideWindowsUpdates.vbs%KB% "%MTRT_LOGPATH%\%MTRT_L
 
 
 :COMPLETE
-CALL :LOGTXT "   All done! You should restart your PC now."
+CALL :LOGTXT "   All done^! You should restart your PC now."
 ECHO   
 TIMEOUT 6
-GOTO :EOF
+GOTO:END
 :FAIL
 TITLE MTRT - ERROR
 ECHO.
 ECHO   
-ECHO   Error, OS not recognized or not Admin!
+ECHO   Error, OS not recognized or not Admin^!
 ECHO    - This tool is to be run on Windows 7, 8, or 10
 ECHO    - Please Right-Click on this file and choose "Run as Administrator" 
 TIMEOUT 6
-GOTO :EOF
+GOTO:END
+
+
+
+:::::::::::::::
+:: FUNCTIONS ::
+:::::::::::::::
 :WRITE_VBS_FILE
 BREAK>"%TEMP%\ElevateMTRT.vbs"
 	ECHO:Set objShell = CreateObject("Shell.Application")>"ElevateMTRT.vbs"
@@ -359,11 +379,12 @@ EXIT /B
 	ECHO:%CUR_DATE% %TIME%  %~1 >>"%MTRT_LOGPATH%\%MTRT_LOGFILE%"
 	ECHO:%CUR_DATE% %TIME%  %~1
 EXIT /B
-:MAKESRP
+:MAKESRPVBS
 BREAK>"%TEMP%\MTRT_SRP.vbs"
 ECHO:Set IRP = getobject("winmgmts:\\.\root\default:Systemrestore")>"%TEMP%\MTRT_SRP.vbs"
 ECHO:MYRP = IRP.createrestorepoint ("Run MTRT", 0, 100)>>"%TEMP%\MTRT_SRP.vbs"
 EXIT /B
-:EOF
+:END
 ENDLOCAL
 EXIT /B
+:EOF
