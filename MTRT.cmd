@@ -259,7 +259,10 @@ FOR /F "eol=# tokens=%TOKENS% delims=	|" %%A IN (Reg.ini) DO (
 
 
 
-:TEST
+	
+	
+	
+
 CALL :LOGTXT "   Blocking via Windows Firewall"
 :: Read from Hosts_Database.ini
 FOR /F "eol=# tokens=1,2 delims=	/" %%A IN (host_database.ini) DO (
@@ -269,6 +272,12 @@ NETSH AdvFirewall Firewall Show Rule %%A_Block >NUL && (
 		CALL :LOGCMD NETSH AdvFirewall Firewall Add Rule Name=%%A_Block RemoteIP=%%B Dir=Out Action=Block Enable=Yes
 	))
 
+:TEST
+CALL :LOGTXT "   Blocking PersistentRoutes"
+:: Read from Hosts_Database.ini
+FOR /F "eol=# tokens=1,2 delims=	/" %%A IN (host_database.ini) DO (
+
+)
 pause
 pause
 exit
